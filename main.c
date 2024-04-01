@@ -48,6 +48,7 @@ ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
 TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim10;
 
 UART_HandleTypeDef huart1;
@@ -56,11 +57,10 @@ UART_HandleTypeDef huart2;
 /* USER CODE BEGIN PV */
 uint16_t adc_buf[ADC_BUF_LEN];
 uint8_t buffer[128];
+uint8_t buffer_1[128];
 uint16_t sensor_max[NUM_SENSORS]={0,0,0,0,0,0,0,0};
 uint16_t sensor_min[NUM_SENSORS]={4096,4096,4096,4096,4096,4096,4096,4096};
 double normalized_value[NUM_SENSORS] = {0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0};
-/* USER CODE BEGIN PV */
-
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -71,6 +71,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_TIM1_Init(void);
+static void MX_TIM3_Init(void);
 static void MX_TIM10_Init(void);
 /* USER CODE BEGIN PFP */
 
@@ -78,6 +79,40 @@ static void MX_TIM10_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* USER CODE BEGIN 0 */
+float sum_norm_ss = 0;
+float position = 0;
+float norm_ss[NUM_SENSORS];
+float error = 0;
+float error_previous = 0;
+float error_integral = 0;
+float error_derivative = 0;
+float setpoint = 0;
+float Motor_right;
+float Motor_left;
+float kp = 0.1;
+float ki = 0.0000001;
+float kd = 0.023;
+float pidCalculate=0;
+float v_linear = 90;
+float dt = 0.01;
+float output_w;
+float wheel_base = 1.0;
+uint8_t test;
+float setupPosition(float *norm_ss)
+{
+
+
+    for (int i = 0; i < NUM_SENSORS; i++)
+    {
+        norm_ss[i] = (double)((double)(adc_buf[i] - sensor_min[i])) / ((double)(sensor_max[i] - sensor_min[i]));
+        sum_norm_ss += norm_ss[i];
+    }
+
+    position = ((-50 * norm_ss[0]) + (-35.72 * norm_ss[1]) + (-21.44 * norm_ss[2]) + (-7.16 * norm_ss[3]) + (7.16 * norm_ss[4]) + (21.44 * norm_ss[5]) + (35.72 * norm_ss[6]) + (50 * norm_ss[7]));
+
+    return position;
+}
 
 /* USER CODE END 0 */
 
@@ -88,39 +123,7 @@ static void MX_TIM10_Init(void);
 int main(void)
 {
   /* USER CODE BEGIN 1 */
-	float sum_norm_ss = 0;
-	float position = 0;
-	float norm_ss[NUM_SENSORS];
-	float error = 0;
-	float error_previous = 0;
-	float error_integral = 0;
-	float error_derivative = 0;
-	float setpoint = 0;
-	float Motor_right;
-	float Motor_left;
-	float kp = 1.4;
-	float ki = 0;
-	float kd = 0.5;
-	float pidCalculate;
-	float v_linear = 70;
-	float dt = 0.1;
-	float output_w;
-	float wheel_base = 1.0;
 
-	float setupPosition(float *norm_ss)
-	{
-
-
-	    for (int i = 0; i < NUM_SENSORS; i++)
-	    {
-	        norm_ss[i] = (double)((double)(adc_buf[i] - sensor_min[i])) / ((double)(sensor_max[i] - sensor_min[i]));
-	        sum_norm_ss += norm_ss[i];
-	    }
-
-	    position = ((-50 * norm_ss[0]) + (-35.72 * norm_ss[1]) + (-21.44 * norm_ss[2]) + (-7.16 * norm_ss[3]) + (7.16 * norm_ss[4]) + (21.44 * norm_ss[5]) + (35.72 * norm_ss[6]) + (50 * norm_ss[7]));
-
-	    return position;
-	}
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -146,11 +149,16 @@ int main(void)
   MX_ADC1_Init();
   MX_USART1_UART_Init();
   MX_TIM1_Init();
+  MX_TIM3_Init();
   MX_TIM10_Init();
   /* USER CODE BEGIN 2 */
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buf, ADC_BUF_LEN);
+  HAL_TIM_Base_Start_IT(&htim1);
+  HAL_TIM_Base_Start_IT(&htim3);
   HAL_TIM_PWM_Start(&htim1 , TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim1 , TIM_CHANNEL_2);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -161,19 +169,40 @@ int main(void)
 
     /* USER CODE BEGIN 3 */
 
-	__HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_1,65525/2);
+		  uint8_t pb_status = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+		  while (pb_status != GPIO_PIN_SET){
+			  for (int i = 0; i < NUM_SENSORS; i++) {
+			        if (adc_buf[i] > sensor_max[i]) {
+			             adc_buf[i] = sensor_max[i];
+			            }
+			            if (adc_buf[i] < sensor_min[i]) {
+			                  adc_buf[i] = sensor_min[i];
+			            }
+			            pb_status = HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_13);
+			     }
+		  }
 
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
-	HAL_Delay(1000);
+		  float position = setupPosition(norm_ss);
+		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
+		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+		  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
+	      TIM1->CCR1 = Motor_left;
+	      TIM1->CCR2 = Motor_right;
+		  // Transmit norm_ss values via UART
+		  sprintf(buffer, "%.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f\r\n",
+				  norm_ss[0], norm_ss[1], norm_ss[2], norm_ss[3],
+		          norm_ss[4], norm_ss[5], norm_ss[6], norm_ss[7]);
+		  HAL_UART_Transmit(&huart2, (uint8_t *)buffer, strlen(buffer), 2000);
 
-	__HAL_TIM_SET_COMPARE(&htim1,TIM_CHANNEL_2,65525/2);
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
+		  // Transmit position value via UART
+		  sprintf(buffer, "Position: %.2f\r\n", position);
+		  HAL_UART_Transmit(&huart2, (uint8_t *)buffer, strlen(buffer), 1000);
 
-	HAL_Delay(1000);
+		  sprintf((char*)buffer_1, "Motor[R,L]: %.2f,%.2f,%d\r\n", Motor_right,Motor_left,test);
+		  HAL_UART_Transmit(&huart2, buffer_1, strlen((char*)buffer_1), 1000);
+	  }
 
-  }
   /* USER CODE END 3 */
 }
 
@@ -194,13 +223,14 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
-  RCC_OscInitStruct.HSEState = RCC_HSE_BYPASS;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 4;
-  RCC_OscInitStruct.PLL.PLLN = 80;
-  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
   RCC_OscInitStruct.PLL.PLLQ = 7;
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
@@ -359,7 +389,7 @@ static void MX_TIM1_Init(void)
   htim1.Instance = TIM1;
   htim1.Init.Prescaler = 80-1;
   htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim1.Init.Period = 65525/2;
+  htim1.Init.Period = 100-1;
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -407,6 +437,51 @@ static void MX_TIM1_Init(void)
 }
 
 /**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 80-1;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 1000;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+
+  /* USER CODE END TIM3_Init 2 */
+
+}
+
+/**
   * @brief TIM10 Initialization Function
   * @param None
   * @retval None
@@ -424,7 +499,7 @@ static void MX_TIM10_Init(void)
   htim10.Instance = TIM10;
   htim10.Init.Prescaler = 80-1;
   htim10.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim10.Init.Period = 1000-1;
+  htim10.Init.Period = 10000-1;
   htim10.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim10.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim10) != HAL_OK)
@@ -567,7 +642,45 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim){
 
+	if(htim-> Instance == TIM3){
+
+		float position = setupPosition(norm_ss);
+
+        // PID Control calculations
+        error = position - setpoint;
+        error_integral += error * dt;
+        error_derivative = (error - error_previous) / dt;
+        error_previous = error;
+        pidCalculate = kp * error + ki * error_integral + kd * error_derivative;
+
+        // Inverse Kinematics
+        output_w = pidCalculate;
+        Motor_right = v_linear + (2000*output_w * wheel_base) / 2.0;
+        Motor_left = v_linear - (2000*output_w * wheel_base) / 2.0;
+
+
+        // Set the PWM duty cycle for the motors
+//        TIM1->CCR1 = Motor_left;
+//        TIM1->CCR2 = Motor_right;
+//        //        //Set the initial pulse width and motor direction for TIM_CHANNEL_1
+//               __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1,Motor_left);
+//                				  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_7, GPIO_PIN_SET);
+//                		          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_6, GPIO_PIN_RESET);
+////
+////        //
+////        //       // Set the initial pulse width and motor direction for TIM_CHANNEL_2
+//               __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2,Motor_right );
+//                		          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_8, GPIO_PIN_RESET);
+//                		          HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
+//        //        		          HAL_Delay(1000);
+
+
+	}
+
+
+}
 /* USER CODE END 4 */
 
 /**
